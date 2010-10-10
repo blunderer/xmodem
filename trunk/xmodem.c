@@ -1,5 +1,5 @@
 /*
- * Copyright 200X My Name
+ * Copyright 2010 Tristan Lelong
  * 
  * This file is part of xmodem.
  * 
@@ -25,6 +25,7 @@
 #include <termios.h>
 #include <fcntl.h>
 #include <signal.h>
+
 
 #define HEAD		3
 #define CSUM		2
@@ -52,29 +53,159 @@ int xmodem_calculate_crc(unsigned int crc, unsigned char data)
 	return crc;
 }
 
-int main(int argc, const char ** argv)
+void xmodem_usage(const char * argv0)
 {
+	printf("usage: %s [-m <mode> -s <speed>] -p <serial port> -i <input file>\n", argv0);
+	printf("options are:\n");
+	printf("\t-s <baud>: 1200 1800 2400 4800 9600 19200 38400 57600 230400 115200. default is 115200\n");
+	printf("\t-m <mode>: [5-8] [N|E|O] [1-2] ex: 7E2. default is 8N1 \n");
+	printf("\t-p <serial port>\n");
+	printf("\t-i <file>\n");
+
+	exit(0);
+}
+
+void xmodem_configure_serial(int port, int speed, char * mode)
+{
+	struct termios options;
+
+	tcgetattr(serial, &options);
+	options.c_cflag |= (CLOCAL | CREAD);
+
+	switch(speed) {
+		case 1200:
+			cfsetispeed(&options, B1200);
+		break;
+		case 1800:
+			cfsetispeed(&options, B1800);
+		break;
+		case 2400:
+			cfsetispeed(&options, B2400);
+		break;
+		case 4800:
+			cfsetispeed(&options, B4800);
+		break;
+		case 9600:
+			cfsetispeed(&options, B9600);
+		break;
+		case 19200:
+			cfsetispeed(&options, B19200);
+		break;
+		case 38400:
+			cfsetispeed(&options, B38400);
+		break;
+		case 57600:
+			cfsetispeed(&options, B57600);
+		break;
+		case 230400:
+			cfsetispeed(&options, B230400);
+		break;
+		case 115200:
+		default:
+			cfsetispeed(&options, B115200);
+		break;
+	}
+
+	options.c_cflag &= ~CSIZE;
+	switch(mode[0]) {
+		case '5':
+			options.c_cflag |= CS5;
+		break;
+		case '6':
+			options.c_cflag |= CS6;
+		break;
+		case '7':
+			options.c_cflag |= CS7;
+		break;
+		case '8':
+		default:
+			options.c_cflag |= CS8;
+		break;
+	}
+
+	switch(mode[1]) {
+		case 'E':
+			options.c_cflag |= PARENB;
+			options.c_cflag &= ~PARODD;
+		break;
+		case 'O':
+			options.c_cflag |= PARENB;
+			options.c_cflag |= PARODD;
+		break;
+		case 'N':
+			options.c_cflag &= ~PARENB;
+		default:
+		break;
+	}
+
+	switch(mode[2]) {
+		case '1':
+			options.c_cflag &= ~CSTOPB;
+		break;
+		case '2':
+		default:
+			options.c_cflag |= CSTOPB;
+		break;
+	}
+
+	tcsetattr(serial, TCSANOW, &options);
+}
+
+int main(int argc, char ** argv)
+{
+	int opt = 0;
 	int cpt = 1;
 	int retry = 0;
 	int oldcpt = 0;
 	int pkt = 0;
-	const char * output = argv[2];
-	const char * input = argv[1];
+	int speed = 115200;
+
+	char * mode = "8N1";
+	const char * output = NULL;
+	const char * input = NULL;
 	unsigned char send_buf[HEAD+PKT_LEN+CSUM];
 	unsigned char recv_buf[16];
 
 	struct timespec delta;
-	struct termios options;
 
 	signal(SIGINT, xmodem_interrupt);
 
 	if(argc < 3) {
-		printf("usage: %s <input file> <serial port>\n", argv[0]);
-		exit(0);
+		xmodem_usage(argv[0]);
+	}
+
+	while((opt = getopt(argc, argv, "s:m:p:")) != -1) {
+		switch (opt) {
+			case 'i':
+				input = optarg;
+				break;
+			case 'p':
+				output = optarg;
+				break;
+			case 's':
+				speed = atoi(optarg);
+				break;
+			case 'm':
+				mode = optarg;
+				break;
+			default:
+				printf("unknown option '%c'\n", opt);
+				xmodem_usage(argv[0]);
+				break;
+		}
+	}
+
+	if(!input) {
+		printf("missing input file %d\n", argc);
+		xmodem_usage(argv[0]);
+	}
+	if(!output) {
+		printf("missing serial port\n");
+		xmodem_usage(argv[0]);
 	}
 
 	printf("########################################\n");
-	printf("send file %s on %s\n", argv[1], argv[2]);
+	printf("send file %s on %s\n", input, output);
 	printf("########################################\n");
 	serial = open(output, O_RDWR | O_NOCTTY | O_NDELAY);
 
@@ -84,15 +215,7 @@ int main(int argc, const char ** argv)
 	}
 
 	fcntl(serial, F_SETFL, 0);
-
-	tcgetattr(serial, &options);
-	cfsetispeed(&options, B115200);
-	options.c_cflag |= (CLOCAL | CREAD);
-	options.c_cflag &= ~PARENB;
-	options.c_cflag &= ~CSTOPB;
-	options.c_cflag &= ~CSIZE;
-	options.c_cflag |= CS8;
-	tcsetattr(serial, TCSANOW, &options);
+	xmodem_configure_serial(serial, speed, mode);
 
 	FILE * fin = fopen(input, "r");
 	if(fin == NULL) {
@@ -147,7 +270,7 @@ int main(int argc, const char ** argv)
 
 			csum.checksum = CRCXMODEM;
 			for(i = 0; i < PKT_LEN; i++) {
-				csum.checksum = xmodem_calculate_crc(csum.checksum, send_buf[i+3]);
+				csum.checksum = xmodem_calculate_crc(csum.checksum, send_buf[i+HEAD]);
 			}
 
 			send_buf[PKT_LEN+HEAD] = csum.val[1];
