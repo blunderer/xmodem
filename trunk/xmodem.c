@@ -174,7 +174,7 @@ int main(int argc, char ** argv)
 		xmodem_usage(argv[0]);
 	}
 
-	while((opt = getopt(argc, argv, "s:m:p:")) != -1) {
+	while((opt = getopt(argc, argv, "i:s:m:p:")) != -1) {
 		switch (opt) {
 			case 'i':
 				input = optarg;
